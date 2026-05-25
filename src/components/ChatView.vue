@@ -41,32 +41,53 @@ async function send() {
   display.value.push(assistantMsg)
   await scrollToBottom()
 
+  // 打字机平滑输出：token 先进 target 缓冲，rAF 逐帧把字揭示到界面，
+  // 保证浏览器逐帧重绘（即使数据成块/瞬间到达，观感也像逐字流式）。
+  let target = ''
+  let streamDone = false
+
+  const typer = new Promise((resolve) => {
+    const tick = () => {
+      if (assistantMsg.content.length < target.length) {
+        const remaining = target.length - assistantMsg.content.length
+        const step = Math.max(2, Math.ceil(remaining / 12))
+        assistantMsg.content = target.slice(0, assistantMsg.content.length + step)
+        scrollToBottom()
+        requestAnimationFrame(tick)
+      } else if (streamDone) {
+        resolve()
+      } else {
+        requestAnimationFrame(tick)
+      }
+    }
+    requestAnimationFrame(tick)
+  })
+
   controller = new AbortController()
 
   try {
-    const final = await streamChat(history, {
+    await streamChat(history, {
       signal: controller.signal,
       onToken: (t) => {
-        assistantMsg.content += t
-        scrollToBottom()
+        target += t
       },
       onToolStart: (q) => {
         status.value = `正在联网搜索：${q}`
         scrollToBottom()
       },
     })
-    // 确保最终内容完整（含搜索后再生成的部分）
-    assistantMsg.content = final
-    history.push({ role: 'assistant', content: final })
   } catch (e) {
     if (e.name === 'AbortError') {
-      assistantMsg.content += '\n\n_（已停止）_'
+      target += '\n\n_（已停止）_'
     } else {
-      assistantMsg.content =
+      target =
         `**出错了：** ${e.message}\n\n请检查本地模型 \`${config.baseURL}\` 是否可达，` +
         '以及是否已开启 CORS（允许浏览器跨域访问）。'
     }
   } finally {
+    streamDone = true
+    await typer // 等打字机把剩余文字吐完
+    history.push({ role: 'assistant', content: assistantMsg.content })
     busy.value = false
     status.value = ''
     controller = null
