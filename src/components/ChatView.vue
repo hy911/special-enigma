@@ -1,0 +1,193 @@
+<script setup>
+import { ref, nextTick, reactive } from 'vue'
+import Message from './Message.vue'
+import { streamChat } from '../lib/chat.js'
+import { config } from '../config.js'
+
+const SYSTEM_PROMPT = {
+  role: 'system',
+  content:
+    '你是一个有帮助的中文助手。回答使用 Markdown 格式。当需要实时或最新信息时，调用 web_search 工具联网搜索后再作答。',
+}
+
+// 用于发送给模型的完整历史（含 system）
+const history = reactive([SYSTEM_PROMPT])
+// 用于展示的消息（不含 system）
+const display = ref([])
+
+const input = ref('')
+const busy = ref(false)
+const status = ref('')
+const scroller = ref(null)
+let controller = null
+
+async function scrollToBottom() {
+  await nextTick()
+  if (scroller.value) scroller.value.scrollTop = scroller.value.scrollHeight
+}
+
+async function send() {
+  const text = input.value.trim()
+  if (!text || busy.value) return
+
+  input.value = ''
+  busy.value = true
+  status.value = ''
+
+  history.push({ role: 'user', content: text })
+  display.value.push({ role: 'user', content: text })
+
+  const assistantMsg = reactive({ role: 'assistant', content: '' })
+  display.value.push(assistantMsg)
+  await scrollToBottom()
+
+  controller = new AbortController()
+
+  try {
+    const final = await streamChat(history, {
+      signal: controller.signal,
+      onToken: (t) => {
+        assistantMsg.content += t
+        scrollToBottom()
+      },
+      onToolStart: (q) => {
+        status.value = `正在联网搜索：${q}`
+        scrollToBottom()
+      },
+    })
+    // 确保最终内容完整（含搜索后再生成的部分）
+    assistantMsg.content = final
+    history.push({ role: 'assistant', content: final })
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      assistantMsg.content += '\n\n_（已停止）_'
+    } else {
+      assistantMsg.content =
+        `**出错了：** ${e.message}\n\n请检查本地模型 \`${config.baseURL}\` 是否可达，` +
+        '以及是否已开启 CORS（允许浏览器跨域访问）。'
+    }
+  } finally {
+    busy.value = false
+    status.value = ''
+    controller = null
+    scrollToBottom()
+  }
+}
+
+function stop() {
+  controller?.abort()
+}
+
+function onKeydown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    send()
+  }
+}
+</script>
+
+<template>
+  <div class="chat">
+    <header>
+      <h1>Qwen3.6 对话</h1>
+      <span class="model">{{ config.model }} · 流式 · Markdown · Tavily 搜索</span>
+    </header>
+
+    <div class="messages" ref="scroller">
+      <div v-if="display.length === 0" class="empty">
+        开始和本地模型对话吧。需要最新信息时模型会自动联网搜索。
+      </div>
+      <Message
+        v-for="(m, i) in display"
+        :key="i"
+        :role="m.role"
+        :content="m.content"
+      />
+      <div v-if="status" class="status">{{ status }}</div>
+    </div>
+
+    <div class="composer">
+      <textarea
+        v-model="input"
+        :disabled="busy"
+        placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+        rows="1"
+        @keydown="onKeydown"
+      ></textarea>
+      <button v-if="!busy" class="send" :disabled="!input.trim()" @click="send">
+        发送
+      </button>
+      <button v-else class="stop" @click="stop">停止</button>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-width: 860px;
+  margin: 0 auto;
+}
+header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+header h1 {
+  margin: 0;
+  font-size: 18px;
+}
+.model {
+  font-size: 12px;
+  color: var(--muted);
+}
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+}
+.empty {
+  color: var(--muted);
+  text-align: center;
+  margin-top: 40px;
+}
+.status {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 6px 4px;
+  font-style: italic;
+}
+.composer {
+  display: flex;
+  gap: 8px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+}
+textarea {
+  flex: 1;
+  resize: none;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+  max-height: 160px;
+}
+textarea:focus {
+  outline: none;
+  border-color: var(--user);
+}
+button {
+  border: none;
+  border-radius: 10px;
+  padding: 0 20px;
+  font: inherit;
+  cursor: pointer;
+  color: #fff;
+}
+.send { background: var(--user); }
+.send:disabled { opacity: 0.5; cursor: not-allowed; }
+.stop { background: #cc3b3b; }
+</style>
