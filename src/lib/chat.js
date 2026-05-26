@@ -110,3 +110,31 @@ export async function streamChat(messages, { onToken, onReasoning, onToolStart, 
 
   return '（已达到最大工具调用轮次）'
 }
+
+// 主回答完成后，另起一次非流式调用，让模型基于对话生成几个追问。
+// 要求返回 JSON，解析出字符串数组。失败则返回空数组（静默降级）。
+export async function generateFollowUps(messages, { signal } = {}) {
+  try {
+    const prompt = {
+      role: 'user',
+      content:
+        '根据以上对话，生成 3 个用户可能想继续追问的、简短的中文问题。' +
+        '只返回 JSON，格式为 {"follow_ups": ["问题1", "问题2", "问题3"]}，不要任何额外文字。',
+    }
+    const res = await client.chat.completions.create(
+      {
+        model: config.model,
+        messages: [...messages, prompt],
+        stream: false,
+        response_format: { type: 'json_object' },
+      },
+      { signal }
+    )
+    const text = res.choices?.[0]?.message?.content || ''
+    const obj = JSON.parse(text)
+    const arr = Array.isArray(obj) ? obj : obj.follow_ups || obj.followUps || []
+    return arr.filter((s) => typeof s === 'string' && s.trim()).slice(0, 3)
+  } catch {
+    return []
+  }
+}

@@ -1,7 +1,7 @@
 <script setup>
 import { ref, nextTick, reactive } from 'vue'
 import Message from './Message.vue'
-import { streamChat } from '../lib/chat.js'
+import { streamChat, generateFollowUps } from '../lib/chat.js'
 import { config } from '../config.js'
 
 const SYSTEM_PROMPT = {
@@ -19,7 +19,9 @@ const input = ref('')
 const busy = ref(false)
 const status = ref('')
 const scroller = ref(null)
+const followUps = ref([])
 let controller = null
+let reqSeq = 0
 
 async function scrollToBottom() {
   await nextTick()
@@ -33,6 +35,8 @@ async function send() {
   input.value = ''
   busy.value = true
   status.value = ''
+  followUps.value = []
+  const mySeq = ++reqSeq
 
   history.push({ role: 'user', content: text })
   display.value.push({ role: 'user', content: text })
@@ -109,6 +113,20 @@ async function send() {
     controller = null
     scrollToBottom()
   }
+
+  // 回答完成后生成追问 chips（非阻塞输入；用序号防过期结果覆盖）
+  const fu = await generateFollowUps(history)
+  if (mySeq === reqSeq) {
+    followUps.value = fu
+    scrollToBottom()
+  }
+}
+
+function ask(q) {
+  if (busy.value) return
+  input.value = q
+  followUps.value = []
+  send()
 }
 
 function stop() {
@@ -142,6 +160,16 @@ function onKeydown(e) {
         :reasoning="m.reasoning"
       />
       <div v-if="status" class="status">{{ status }}</div>
+      <div v-if="followUps.length && !busy" class="followups">
+        <button
+          v-for="(q, i) in followUps"
+          :key="i"
+          class="chip"
+          @click="ask(q)"
+        >
+          {{ q }}
+        </button>
+      </div>
     </div>
 
     <div class="composer">
@@ -195,6 +223,28 @@ header h1 {
   font-size: 13px;
   margin: 6px 4px;
   font-style: italic;
+}
+.followups {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 4px 4px;
+}
+.chip {
+  align-self: flex-start;
+  max-width: 100%;
+  text-align: left;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.chip:hover {
+  border-color: var(--user);
 }
 .composer {
   display: flex;
