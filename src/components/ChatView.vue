@@ -4,9 +4,18 @@ import Message from './Message.vue'
 import { streamChat, generateFollowUps } from '../lib/chat.js'
 import { config } from '../config.js'
 
+const now = new Date()
+const todayStr = now.toLocaleString('zh-CN', {
+  year: 'numeric',
+  month: 'long',
+  day: 'numeric',
+  weekday: 'long',
+})
+
 const SYSTEM_PROMPT = {
   role: 'system',
   content:
+    `当前日期是 ${todayStr}。请以此为准理解“最新”“现状”“今年”等时间相关表述，不要默认更早的年份。\n` +
     '你是一个有帮助的中文助手。回答使用 Markdown 格式。当需要实时或最新信息时，调用 web_search 工具联网搜索后再作答。',
 }
 
