@@ -86,9 +86,10 @@ export async function streamChat(messages, { onToken, onReasoning, onToolStart, 
         const delta = json.choices?.[0]?.delta
         if (!delta) return
 
-        // 推理模型的思考内容在 reasoning_content 字段，单独实时回显
-        if (delta.reasoning_content) {
-          onReasoning?.(delta.reasoning_content)
+        // 推理模型的思考内容（不同服务端字段名不一：reasoning / reasoning_content）
+        const reasoning = delta.reasoning ?? delta.reasoning_content
+        if (reasoning) {
+          onReasoning?.(reasoning)
         }
 
         if (delta.content) {
