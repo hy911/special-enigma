@@ -66,7 +66,7 @@ async function streamSSE(body, signal, onEvent) {
 }
 
 // messages: 完整对话历史（含 system）。回调用于实时 UI 更新。
-export async function streamChat(messages, { onToken, onToolStart, signal } = {}) {
+export async function streamChat(messages, { onToken, onReasoning, onToolStart, signal } = {}) {
   const working = [...messages]
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
@@ -85,6 +85,11 @@ export async function streamChat(messages, { onToken, onToolStart, signal } = {}
       (json) => {
         const delta = json.choices?.[0]?.delta
         if (!delta) return
+
+        // 推理模型的思考内容在 reasoning_content 字段，单独实时回显
+        if (delta.reasoning_content) {
+          onReasoning?.(delta.reasoning_content)
+        }
 
         if (delta.content) {
           content += delta.content

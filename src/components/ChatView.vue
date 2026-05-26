@@ -37,21 +37,34 @@ async function send() {
   history.push({ role: 'user', content: text })
   display.value.push({ role: 'user', content: text })
 
-  const assistantMsg = reactive({ role: 'assistant', content: '' })
+  const assistantMsg = reactive({ role: 'assistant', content: '', reasoning: '' })
   display.value.push(assistantMsg)
   await scrollToBottom()
 
-  // 打字机平滑输出：token 先进 target 缓冲，rAF 逐帧把字揭示到界面，
-  // 保证浏览器逐帧重绘（即使数据成块/瞬间到达，观感也像逐字流式）。
-  let target = ''
+  // 打字机平滑输出：token 先进缓冲，rAF 逐帧把字揭示到界面，
+  // 保证浏览器逐帧重绘。reasoning（思考）与 content（正式回答）各一条缓冲。
+  let reasoningTarget = ''
+  let contentTarget = ''
   let streamDone = false
+
+  const reveal = (cur, target) => {
+    const remaining = target.length - cur.length
+    const step = Math.max(2, Math.ceil(remaining / 12))
+    return target.slice(0, cur.length + step)
+  }
 
   const typer = new Promise((resolve) => {
     const tick = () => {
-      if (assistantMsg.content.length < target.length) {
-        const remaining = target.length - assistantMsg.content.length
-        const step = Math.max(2, Math.ceil(remaining / 12))
-        assistantMsg.content = target.slice(0, assistantMsg.content.length + step)
+      let working = false
+      if (assistantMsg.reasoning.length < reasoningTarget.length) {
+        assistantMsg.reasoning = reveal(assistantMsg.reasoning, reasoningTarget)
+        working = true
+      }
+      if (assistantMsg.content.length < contentTarget.length) {
+        assistantMsg.content = reveal(assistantMsg.content, contentTarget)
+        working = true
+      }
+      if (working) {
         scrollToBottom()
         requestAnimationFrame(tick)
       } else if (streamDone) {
@@ -68,8 +81,11 @@ async function send() {
   try {
     await streamChat(history, {
       signal: controller.signal,
+      onReasoning: (t) => {
+        reasoningTarget += t
+      },
       onToken: (t) => {
-        target += t
+        contentTarget += t
       },
       onToolStart: (q) => {
         status.value = `正在联网搜索：${q}`
@@ -78,9 +94,9 @@ async function send() {
     })
   } catch (e) {
     if (e.name === 'AbortError') {
-      target += '\n\n_（已停止）_'
+      contentTarget += '\n\n_（已停止）_'
     } else {
-      target =
+      contentTarget =
         `**出错了：** ${e.message}\n\n请检查本地模型 \`${config.baseURL}\` 是否可达，` +
         '以及是否已开启 CORS（允许浏览器跨域访问）。'
     }
@@ -123,6 +139,7 @@ function onKeydown(e) {
         :key="i"
         :role="m.role"
         :content="m.content"
+        :reasoning="m.reasoning"
       />
       <div v-if="status" class="status">{{ status }}</div>
     </div>
